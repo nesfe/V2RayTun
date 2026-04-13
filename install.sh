@@ -136,18 +136,37 @@ print_ok "Установлен: $XRAY_VERSION"
 print_step "ЭТАП 3/5: Генерация ключей и конфигурация"
 
 UUID=$(/usr/local/bin/xray uuid)
-KEYS=$(/usr/local/bin/xray x25519)
-PRIVATE_KEY=$(echo "$KEYS" | grep -i "private" | awk '{print $NF}')
-PUBLIC_KEY=$(echo "$KEYS" | grep -i "public" | awk '{print $NF}')
+
+# Генерируем ключи, ловим и stdout и stderr
+KEYS=$(/usr/local/bin/xray x25519 2>&1)
+
+# Парсим: берём значение после двоеточия в каждой строке
+PRIVATE_KEY=$(echo "$KEYS" | head -1 | sed 's/.*: *//')
+PUBLIC_KEY=$(echo "$KEYS" | sed -n '2p' | sed 's/.*: *//')
 SHORT_ID=$(openssl rand -hex 8)
+
+# Проверяем что ключи не пустые
+if [ -z "$PRIVATE_KEY" ]; then
+    print_err "Не удалось получить Private Key!"
+    echo "Вывод xray x25519:"
+    echo "$KEYS"
+    exit 1
+fi
+if [ -z "$PUBLIC_KEY" ]; then
+    print_err "Не удалось получить Public Key!"
+    echo "Вывод xray x25519:"
+    echo "$KEYS"
+    exit 1
+fi
 
 print_ok "UUID:        $UUID"
 print_ok "Private Key: $PRIVATE_KEY"
 print_ok "Public Key:  $PUBLIC_KEY"
 print_ok "Short ID:    $SHORT_ID"
 
-# Пишем конфиг
-cat > /usr/local/etc/xray/config.json << XEOF
+# Пишем конфиг — используем одинарные кавычки в HEREDOC чтобы ничего не раскрывалось
+# потом подставляем через sed
+cat > /usr/local/etc/xray/config.json << 'XEOF'
 {
   "log": {
     "loglevel": "warning"
@@ -160,7 +179,7 @@ cat > /usr/local/etc/xray/config.json << XEOF
       "settings": {
         "clients": [
           {
-            "id": "${UUID}",
+            "id": "PLACEHOLDER_UUID",
             "flow": "xtls-rprx-vision"
           }
         ],
@@ -171,14 +190,14 @@ cat > /usr/local/etc/xray/config.json << XEOF
         "security": "reality",
         "realitySettings": {
           "show": false,
-          "dest": "${SNI}:443",
+          "dest": "PLACEHOLDER_SNI:443",
           "xver": 0,
           "serverNames": [
-            "${SNI}"
+            "PLACEHOLDER_SNI"
           ],
-          "privateKey": "${PRIVATE_KEY}",
+          "privateKey": "PLACEHOLDER_PRIVATE_KEY",
           "shortIds": [
-            "${SHORT_ID}"
+            "PLACEHOLDER_SHORT_ID"
           ]
         }
       },
@@ -223,12 +242,23 @@ cat > /usr/local/etc/xray/config.json << XEOF
 }
 XEOF
 
+# Подставляем реальные значения через sed
+sed -i "s|PLACEHOLDER_UUID|${UUID}|g" /usr/local/etc/xray/config.json
+sed -i "s|PLACEHOLDER_PRIVATE_KEY|${PRIVATE_KEY}|g" /usr/local/etc/xray/config.json
+sed -i "s|PLACEHOLDER_SHORT_ID|${SHORT_ID}|g" /usr/local/etc/xray/config.json
+sed -i "s|PLACEHOLDER_SNI|${SNI}|g" /usr/local/etc/xray/config.json
+
 print_ok "Конфиг записан в /usr/local/etc/xray/config.json"
 
 # Проверяем конфиг
 echo "Проверяю конфиг..."
-/usr/local/bin/xray run -test -config /usr/local/etc/xray/config.json
-print_ok "Конфиг валиден"
+if /usr/local/bin/xray run -test -config /usr/local/etc/xray/config.json 2>&1; then
+    print_ok "Конфиг валиден"
+else
+    print_err "Конфиг невалиден! Содержимое:"
+    cat /usr/local/etc/xray/config.json
+    exit 1
+fi
 
 # ============================================================
 # ЭТАП 4: FIREWALL
@@ -269,11 +299,7 @@ else
 fi
 
 # Генерируем ссылку
-FLOW="xtls-rprx-vision"
-FINGERPRINT="chrome"
-SECURITY="reality"
-
-LINK="vless://${UUID}@${SERVER_IP}:443?encryption=none&flow=${FLOW}&type=tcp&security=${SECURITY}&sni=${SNI}&fp=${FINGERPRINT}&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}#Reality-${SNI}"
+LINK="vless://${UUID}@${SERVER_IP}:443?encryption=none&flow=xtls-rprx-vision&type=tcp&security=reality&sni=${SNI}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}#Reality-${SNI}"
 
 echo ""
 echo -e "${GREEN}============================================${NC}"
@@ -305,6 +331,17 @@ echo "  systemctl restart xray       — перезапуск"
 echo "  ss -tulpn                    — открытые порты"
 echo "  ufw status                   — firewall"
 
-# Сохраняем ссылку в файл
-echo "$LINK" > /root/v2raytun-link.txt
-print_ok "Ссылка также сохранена в /root/v2raytun-link.txt"
+# Сохраняем ссылку и данные в файл
+cat > /root/v2raytun-link.txt << LINKEOF
+VLESS Link:
+${LINK}
+
+UUID:        ${UUID}
+Private Key: ${PRIVATE_KEY}
+Public Key:  ${PUBLIC_KEY}
+Short ID:    ${SHORT_ID}
+Server:      ${SERVER_IP}
+SNI:         ${SNI}
+LINKEOF
+
+print_ok "Ссылка и ключи сохранены в /root/v2raytun-link.txt"
