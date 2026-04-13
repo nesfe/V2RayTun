@@ -13,8 +13,8 @@ echo "UUID: $UUID"
 
 echo "=== Генерируем ключи Reality ==="
 KEYS=$(/usr/local/bin/xray x25519)
-PRIVATE_KEY=$(echo "$KEYS" | grep "Private" | awk '{print $3}')
-PUBLIC_KEY=$(echo "$KEYS" | grep "Public" | awk '{print $3}')
+PRIVATE_KEY=$(echo "$KEYS" | grep -i "private" | awk '{print $NF}')
+PUBLIC_KEY=$(echo "$KEYS" | grep -i "public" | awk '{print $NF}')
 echo "Private Key: $PRIVATE_KEY"
 echo "Public Key: $PUBLIC_KEY"
 
